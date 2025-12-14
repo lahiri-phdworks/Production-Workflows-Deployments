@@ -4,6 +4,25 @@ This folder holds a tiny Apache Airflow project with a single DAG that chains th
 Python tasks (extract, transform, load). Follow the steps below if you are new to
 Airflow and want to try the workflow locally.
 
+- [https://github.com/apache/airflow](https://github.com/apache/airflow)
+- [https://github.com/apache/airflow?tab=readme-ov-file#principles](https://github.com/apache/airflow?tab=readme-ov-file#principles)
+- [https://airflow.apache.org/](https://airflow.apache.org/)
+- [https://www.datacamp.com/tutorial/getting-started-with-apache-airflow](https://www.datacamp.com/tutorial/getting-started-with-apache-airflow)
+
+## Astronomer.
+
+Apart for coldplay tickets, there are a quite a few things to learn and investigate here.
+
+- [https://www.astronomer.io/docs/home/astronomer-documentation](https://www.astronomer.io/docs/home/astronomer-documentation)
+- [https://www.astronomer.io/](https://www.astronomer.io/)
+
+## Examples 
+
+- [https://www.datacamp.com/tutorial/building-an-etl-pipeline-with-airflow](https://www.datacamp.com/tutorial/building-an-etl-pipeline-with-airflow)
+- [https://www.datacamp.com/tutorial/getting-started-with-apache-airflow](https://www.datacamp.com/tutorial/getting-started-with-apache-airflow)
+- [https://www.datacamp.com/blog/what-is-a-dag](https://www.datacamp.com/blog/what-is-a-dag)
+- [https://www.datacamp.com/blog/data-contracts](https://www.datacamp.com/blog/data-contracts)
+
 ## 1. Install prerequisites
 
 * Python 3.11+
@@ -12,15 +31,30 @@ Airflow and want to try the workflow locally.
 
 ```bash
 cd Airflow
+# Not ncessary with uv
 uv venv .venv
 source .venv/bin/activate
+
 export AIRFLOW_HOME="$(pwd)/airflow_home"
 export AIRFLOW__CORE__DAGS_FOLDER="$(pwd)/dags"  # point Airflow at the repo DAGs
-AIRFLOW_VERSION=2.8.4
+
+AIRFLOW_VERSION=3.1.5
 PYTHON_VERSION="$(python -V | awk '{print $2}' | cut -d'.' -f1-2)"
+
 CONSTRAINT_URL="https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt"
 uv pip install --constraint "${CONSTRAINT_URL}" "apache-airflow==${AIRFLOW_VERSION}"
+uv add --constraints "${CONSTRAINT_URL}" "apache-airflow==${AIRFLOW_VERSION}"
+
+uv run airflow standalone
 ```
+
+Manadatory to note the user name and the password, printed in the terminal at the start of the application.
+
+### Some valid constraint file links. 
+
+- [https://raw.githubusercontent.com/apache/airflow/constraints-3.1.5/constraints-3.10.txt](https://raw.githubusercontent.com/apache/airflow/constraints-3.1.5/constraints-3.10.txt)
+- [https://raw.githubusercontent.com/apache/airflow/constraints-3.1.5/constraints-3.13.txt](https://raw.githubusercontent.com/apache/airflow/constraints-3.1.5/constraints-3.13.txt)
+
 
 > You only have to export `AIRFLOW_HOME` once per shell. Keeping it inside the
 > project makes cleanup easy.
