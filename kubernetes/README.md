@@ -30,6 +30,9 @@ To further debug and diagnose cluster problems, use 'kubectl cluster-info dump'.
 kubectl run nginx-pod --image=nginx
 kubectl get pods
 ```
+
+## Other variations
+
+```bash 
+kubectl get pods -o wide
 ```
-
-
