@@ -1,0 +1,72 @@
+name: terraform-deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_WORKING_DIR: infra
+  SSH_REMOTE_USER: ubuntu # Ubuntu 22.04 default user
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init / plan / apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init
+          terraform fmt -check
+          terraform validate
+          terraform plan -out=tfplan
+          terraform apply -auto-approve tfplan
+
+      - name: Capture Terraform outputs
+        id: tf_outputs
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform output -json > tf-outputs.json
+          echo "public_ips=$(jq -r '.instance_public_ips.value[]' tf-outputs.json | paste -sd ' ' -)" >> $GITHUB_OUTPUT
+          echo "app_user=$(jq -r '.app_user.value' tf-outputs.json)" >> $GITHUB_OUTPUT
+          echo "app_port=$(jq -r '.app_port.value' tf-outputs.json)" >> $GITHUB_OUTPUT
+          echo "codedeploy_bucket=$(jq -r '.codedeploy_bucket.value' tf-outputs.json)" >> $GITHUB_OUTPUT
+          echo "codedeploy_app=$(jq -r '.codedeploy_app_name.value' tf-outputs.json)" >> $GITHUB_OUTPUT
+          echo "codedeploy_dg=$(jq -r '.codedeploy_deployment_group.value' tf-outputs.json)" >> $GITHUB_OUTPUT
+
+      - name: Build CodeDeploy bundle
+        run: |
+          zip -r app.zip . -x ".git/*" ".github/*" ".venv/*" "__pycache__/*"
+
+      - name: Upload bundle to S3 for CodeDeploy
+        run: |
+          KEY="releases/${GITHUB_SHA}.zip"
+          aws s3 cp app.zip s3://${{ steps.tf_outputs.outputs.codedeploy_bucket }}/$KEY
+          echo "bundle_key=$KEY" >> $GITHUB_OUTPUT
+        id: upload_bundle
+
+      - name: Trigger CodeDeploy deployment
+        run: |
+          aws deploy create-deployment \
+            --application-name "${{ steps.tf_outputs.outputs.codedeploy_app }}" \
+            --deployment-group-name "${{ steps.tf_outputs.outputs.codedeploy_dg }}" \
+            --s3-location bucket=${{ steps.tf_outputs.outputs.codedeploy_bucket }},bundleType=zip,key=${{ steps.upload_bundle.outputs.bundle_key }} \
+            --description "GitHub Actions deployment $GITHUB_SHA"
