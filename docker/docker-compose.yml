@@ -1,0 +1,273 @@
+version: "3.9"
+
+name: ai-observability-stack
+
+services:
+  # -------------------------
+  # DATASTORES
+  # -------------------------
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: appdb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:7
+    container_name: mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin
+    volumes:
+      - mongodata:/data/db
+    ports:
+      - "27017:27017"
+    restart: unless-stopped
+
+  mongo-express:
+    image: mongo-express
+    container_name: mongo-express
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: admin
+      ME_CONFIG_MONGODB_URL: mongodb://admin:admin@mongodb:27017/
+    ports:
+      - "8085:8081"
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+
+  redis-stack:
+    image: redis/redis-stack:latest
+    container_name: redis-stack
+    ports:
+      - "6380:6379"
+      - "9088:8001"
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+
+  # -------------------------
+  # LANGFUSE
+  # -------------------------
+  valkey:
+    image: valkey/valkey:7
+    container_name: valkey
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: clickhouse
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+    volumes:
+      - clickhousedata:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio
+    container_name: minio
+    command: minio server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    volumes:
+      - miniodata:/data
+    ports:
+      - "9001:9001"
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      sh -c "
+      mc alias set local http://minio:9000 minio minio123 &&
+      mc mb -p local/langfuse || true
+      "
+    restart: "no"
+
+  langfuse-web:
+    image: langfuse/langfuse:latest
+    container_name: langfuse-web
+    depends_on:
+      - postgres
+      - clickhouse
+      - valkey
+      - minio
+    environment:
+      DATABASE_URL: postgres://admin:admin@postgres:5432/appdb
+      NEXTAUTH_SECRET: secret
+      SALT: salt
+      REDIS_URL: redis://valkey:6379
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+      CLICKHOUSE_DATABASE: langfuse
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: langfuse
+      S3_ACCESS_KEY_ID: minio
+      S3_SECRET_ACCESS_KEY: minio123
+      S3_REGION: us-east-1
+      S3_FORCE_PATH_STYLE: "true"
+      NEXTAUTH_URL: http://localhost:3000
+      LANGFUSE_HOST: http://localhost:3000
+    ports:
+      - "3500:3000"
+    restart: unless-stopped
+
+  langfuse-worker:
+    image: langfuse/langfuse:latest
+    container_name: langfuse-worker
+    depends_on:
+      - langfuse-web
+    environment:
+      DATABASE_URL: postgres://admin:admin@postgres:5432/appdb
+      NEXTAUTH_SECRET: secret
+      SALT: salt
+      REDIS_URL: redis://valkey:6379
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+      CLICKHOUSE_DATABASE: langfuse
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: langfuse
+      S3_ACCESS_KEY_ID: minio
+      S3_SECRET_ACCESS_KEY: minio123
+      S3_REGION: us-east-1
+      S3_FORCE_PATH_STYLE: "true"
+      LANGFUSE_WORKER: "true"
+    restart: unless-stopped
+
+  # -------------------------
+  # OBSERVABILITY
+  # -------------------------
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+    ports:
+      - "9092:9090"
+    depends_on:
+      - node-exporter
+      - cadvisor
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki
+    container_name: loki
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail
+    container_name: promtail
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/docker-config.yaml
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo
+    container_name: tempo
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+      - "4318:4318"
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter
+    container_name: node-exporter
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    command:
+      - --path.rootfs=/host
+    restart: unless-stopped
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:latest
+    container_name: cadvisor
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  portainer:
+    image: portainer/portainer-ce
+    container_name: portainer
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainerdata:/data
+    ports:
+      - "9002:9000"
+    restart: unless-stopped
+
+  dozzle:
+    image: amir20/dozzle
+    container_name: dozzle
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "9999:8080"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  mongodata:
+  redisdata:
+  clickhousedata:
+  miniodata:
+  grafanadata:
+  prometheusdata:
+  portainerdata:
